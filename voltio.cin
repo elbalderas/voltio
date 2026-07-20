@@ -1,0 +1,133 @@
+/*
+ * voltio.cin  —  CANoe CAPL integration for Voltio
+ *
+ * Prerequisites:
+ *   voltio.dll built and placed alongside the CANoe project.
+ *
+ * CAPL usage:
+ *   variables { long hVoltio; }
+ *
+ *   on start {
+ *     hVoltio = loadDll("voltio.dll");
+ *     Voltio_Open("COM4");
+ *   }
+ *   on stopMeasurement {
+ *     Voltio_Close();
+ *     unloadDll(hVoltio);
+ *   }
+ */
+
+variables
+{
+    long   hVoltio;
+    char   g_voltio_port[16] = "COM4";
+}
+
+/* -------------------------------------------------------------------------
+ * Lifecycle
+ * ---------------------------------------------------------------------- */
+void Voltio_Open(char port[])
+{
+    hVoltio = loadDll("voltio.dll");
+    if (callDll(hVoltio, "Voltio_Open", port) == 0)
+        write("[Voltio] ERROR: could not open port %s", port);
+    else
+        write("[Voltio] Connected on %s", port);
+}
+
+void Voltio_Close()
+{
+    callDll(hVoltio, "Voltio_Close");
+    unloadDll(hVoltio);
+    write("[Voltio] Disconnected");
+}
+
+/* -------------------------------------------------------------------------
+ * Output control
+ * ---------------------------------------------------------------------- */
+long Voltio_SetVoltage(double volts)         { return callDll(hVoltio, "Voltio_SetVoltage", volts); }
+long Voltio_SetCurrent(double amps)          { return callDll(hVoltio, "Voltio_SetCurrent", amps); }
+long Voltio_SetVoltageCurrent(double v, double a) { return callDll(hVoltio, "Voltio_SetVoltageCurrent", v, a); }
+long Voltio_OutputOn()                       { return callDll(hVoltio, "Voltio_OutputOn"); }
+long Voltio_OutputOff()                      { return callDll(hVoltio, "Voltio_OutputOff"); }
+
+/* -------------------------------------------------------------------------
+ * Readings
+ * ---------------------------------------------------------------------- */
+double Voltio_GetVoltageSet()     { return callDll(hVoltio, "Voltio_GetVoltageSet"); }
+double Voltio_GetCurrentSet()     { return callDll(hVoltio, "Voltio_GetCurrentSet"); }
+double Voltio_GetVoltageActual()  { return callDll(hVoltio, "Voltio_GetVoltageActual"); }
+double Voltio_GetCurrentActual()  { return callDll(hVoltio, "Voltio_GetCurrentActual"); }
+double Voltio_GetPowerActual()    { return callDll(hVoltio, "Voltio_GetPowerActual"); }
+long   Voltio_GetMode()           { return callDll(hVoltio, "Voltio_GetMode"); }  /* 0=CV 1=CC */
+
+/* -------------------------------------------------------------------------
+ * Settling check
+ *
+ * The PSU has no ready flag; readings lag output changes.  Polls the
+ * actual voltage until it is within tol_V of v_expected.
+ * Returns 1 = settled, 0 = timeout or pulled into CC mode (voltage will
+ * never reach the setpoint under current limiting).
+ * Test nodes only (uses wait).
+ * ---------------------------------------------------------------------- */
+long Voltio_WaitSettled(double v_expected, double tol_V, long timeout_ms)
+{
+    long   elapsed = 0;
+    double v;
+    while (elapsed < timeout_ms) {
+        v = Voltio_GetVoltageActual();
+        if (v >= 0.0 && abs(v - v_expected) <= tol_V) return 1;
+        if (Voltio_GetMode() == 1) return 0;
+        wait(100);
+        elapsed += 100;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Preset memory
+ * ---------------------------------------------------------------------- */
+long Voltio_RecallPreset(long slot) { return callDll(hVoltio, "Voltio_RecallPreset", slot); }
+
+/* -------------------------------------------------------------------------
+ * Protection limits
+ * ---------------------------------------------------------------------- */
+long   Voltio_SetOVP(double volts) { return callDll(hVoltio, "Voltio_SetOVP", volts); }
+long   Voltio_SetOCP(double amps)  { return callDll(hVoltio, "Voltio_SetOCP", amps); }
+double Voltio_GetOVP()             { return callDll(hVoltio, "Voltio_GetOVP"); }
+double Voltio_GetOCP()             { return callDll(hVoltio, "Voltio_GetOCP"); }
+
+/* -------------------------------------------------------------------------
+ * Example test case
+ * ---------------------------------------------------------------------- */
+testcase TC_Voltio_12V_2A()
+{
+    double v_actual, i_actual, pwr;
+    long   mode;
+
+    TestStep("Voltio", "Set 12.0 V / 2.0 A and enable output");
+    Voltio_SetVoltageCurrent(12.0, 2.0);
+    Voltio_OutputOn();
+
+    if (!Voltio_WaitSettled(12.0, 0.2, 2000)) {
+        TestStepFail("Output did not settle", "expected 12.0 V within 2 s (timeout or CC limiting)");
+        Voltio_OutputOff();
+        return;
+    }
+
+    v_actual = Voltio_GetVoltageActual();
+    i_actual = Voltio_GetCurrentActual();
+    pwr      = Voltio_GetPowerActual();
+    mode     = Voltio_GetMode();
+
+    TestStep("Voltio", "Voltage: %.2f V | Current: %.2f A | Power: %.2f W | Mode: %s",
+             v_actual, i_actual, pwr, mode == 0 ? "CV" : "CC");
+
+    if (abs(v_actual - 12.0) < 0.2)
+        TestStepPass("Voltage within tolerance", "%.2f V", v_actual);
+    else
+        TestStepFail("Voltage out of tolerance", "expected 12.0 V, got %.2f V", v_actual);
+
+    wait(2000);
+    Voltio_OutputOff();
+}

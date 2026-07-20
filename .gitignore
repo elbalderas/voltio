@@ -1,0 +1,10 @@
+# Build outputs
+build/
+build-win/
+
+# Local editor / tool settings
+.vscode/
+.claude/settings.local.json
+
+# macOS
+.DS_Store
