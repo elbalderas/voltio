@@ -7,6 +7,7 @@ is prompted to do. Every call is written to the audit log.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from typing import Callable
 from .backend import CliBackend
 from .config import Config
 
+log = logging.getLogger("voltio_mcp")
 
 class LimitError(Exception):
     """A request was refused because it breaks the bench limits."""
@@ -25,24 +27,42 @@ class AuditLog:
     def __init__(self, path: Path | None):
         self._path = path
         self._lock = threading.Lock()
+        self._degraded = False
 
     def write(self, tool: str, args: dict, *, result=None, error: str | None = None) -> None:
+        """Append one entry. Never raises: a broken log must not change a tool's outcome."""
         if self._path is None:
             return
-        entry = {
-            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            "tool": tool,
-            "args": args,
-        }
-        if error is None:
-            entry["result"] = result
+        try:
+            entry = {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                "tool": tool,
+                "args": args,
+            }
+            if error is None:
+                entry["result"] = result
+            else:
+                entry["error"] = error
+            line = json.dumps(entry, separators=(",", ":")) + "\n"
+            with self._lock:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                with self._path.open("a", encoding="utf-8") as f:
+                    f.write(line)
+        except Exception as e:
+            # Warn once per outage, then stay quiet until a write succeeds again.
+            if not self._degraded:
+                log.warning("audit log write to %s failed: %s", self._path, e)
+            self._degraded = True
         else:
-            entry["error"] = error
-        line = json.dumps(entry, separators=(",", ":")) + "\n"
-        with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(line)
+            self._degraded = False
+
+    def verify(self) -> None:
+        """Create the log's directory and file now, raising OSError if that's impossible."""
+        if self._path is None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("a", encoding="utf-8"):
+            pass
 
 
 def _stats(values: list[float]) -> dict:

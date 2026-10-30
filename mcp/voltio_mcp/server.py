@@ -107,7 +107,19 @@ def main(argv: list[str] | None = None) -> None:
                     args.host)
 
     backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
-    bench = Bench(cfg, backend, AuditLog(cfg.audit_log))
+    audit = AuditLog(cfg.audit_log)
+    try:
+        audit.verify()
+    except OSError as e:
+        p.error(f"audit log not writable: {e}")
+    audit.write("server_start", {
+        "port": cfg.port,
+        "max_voltage_V": cfg.max_voltage_V,
+        "max_current_A": cfg.max_current_A,
+        "ovp_V": cfg.ovp_V,
+        "ocp_A": cfg.ocp_A,
+    })
+    bench = Bench(cfg, backend, audit)
     log.info("PSU on %s, limits %.2f V / %.2f A, audit log %s",
              cfg.port, cfg.max_voltage_V, cfg.max_current_A, cfg.audit_log or "disabled")
 

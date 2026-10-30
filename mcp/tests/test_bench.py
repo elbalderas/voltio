@@ -5,9 +5,9 @@ import types
 import pytest
 
 from voltio_mcp.backend import CliBackend, VoltioError
-from voltio_mcp.bench import LimitError
+from voltio_mcp.bench import AuditLog, Bench, LimitError
 from voltio_mcp.config import ConfigError, load_config
-from voltio_mcp.server import create_server
+from voltio_mcp.server import create_server, main
 
 from conftest import write_config
 
@@ -120,6 +120,39 @@ def test_audit_log_records_success_and_refusal(bench, psu, tmp_path):
     assert [e["tool"] for e in entries] == ["set", "set"]
     assert entries[0]["result"]["voltage_set_V"] == 12.0
     assert "LimitError" in entries[1]["error"]
+
+
+def _unwritable_log(tmp_path):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    return blocker / "audit.jsonl"  # parent is a file, so mkdir/open fail
+
+
+def test_unwritable_audit_log_never_changes_outcome(tmp_path, psu, fake_time):
+    cfg = load_config(write_config(tmp_path))
+    backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
+    bench = Bench(cfg, backend, AuditLog(_unwritable_log(tmp_path)), sleep=fake_time.sleep, clock=fake_time.clock)
+    assert bench.set(12.0, 1.0)["voltage_set_V"] == 12.0
+    with pytest.raises(LimitError):
+        bench.set(30.0, None)
+
+
+def test_audit_log_verify(tmp_path):
+    with pytest.raises(OSError):
+        AuditLog(_unwritable_log(tmp_path)).verify()
+    good = tmp_path / "logs" / "nested" / "audit.jsonl"
+    AuditLog(good).verify()
+    assert good.exists()
+    AuditLog(None).verify()  # disabled log: no-op
+
+
+def test_server_refuses_to_start_with_unwritable_audit_log(tmp_path, capsys):
+    cfg = write_config(tmp_path)
+    bad = _unwritable_log(tmp_path)
+    cfg.write_text(cfg.read_text().replace('log = "audit.jsonl"', f"log = '{bad}'"))
+    with pytest.raises(SystemExit):
+        main(["--config", str(cfg)])
+    assert "audit log not writable" in capsys.readouterr().err
 
 
 # --- config ----------------------------------------------------------------------
