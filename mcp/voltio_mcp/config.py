@@ -71,7 +71,7 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError("missing required setting 'port' in [psu]")
 
     dp = psu.get("dp", 1)
-    if dp not in (1, 2):
+    if not (isinstance(dp, int) and not isinstance(dp, bool) and dp in (1, 2)):
         raise ConfigError("'dp' must be 1 (most models) or 2 (1685B)")
 
     max_v = _num(limits, "max_voltage_V", required=True)
@@ -97,6 +97,10 @@ def load_config(path: str | Path) -> Config:
     if max_dur <= 0 or min_int <= 0:
         raise ConfigError("measure: max_duration_s and min_interval_ms must be > 0")
 
+    timeout_s = _num(psu, "timeout_s", 5.0)
+    if timeout_s <= 0:
+        raise ConfigError("'timeout_s' must be > 0")
+
     log = audit.get("log", "voltio-audit.jsonl")
     audit_log = None
     if log:
@@ -108,7 +112,7 @@ def load_config(path: str | Path) -> Config:
         cli=list(cli),
         port=port,
         dp=dp,
-        timeout_s=_num(psu, "timeout_s", 5.0),
+        timeout_s=timeout_s,
         max_voltage_V=max_v,
         max_current_A=max_a,
         ovp_V=ovp,

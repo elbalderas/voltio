@@ -130,6 +130,19 @@ def test_config_rejects_ovp_below_max(tmp_path):
         load_config(cfg)
 
 
+@pytest.mark.parametrize("psu_toml,match", [
+    ('port = "COM4"\ntimeout_s = 0', "timeout_s"),
+    ('port = "COM4"\ntimeout_s = -1.5', "timeout_s"),
+    ('port = "COM4"\ndp = 1.0', "dp"),
+    ('port = "COM4"\ndp = true', "dp"),
+])
+def test_config_rejects_bad_psu_settings(tmp_path, psu_toml, match):
+    cfg = tmp_path / "bench.toml"
+    cfg.write_text(f"[psu]\n{psu_toml}\n\n[limits]\nmax_voltage_V = 14.0\nmax_current_A = 3.0\n")
+    with pytest.raises(ConfigError, match=match):
+        load_config(cfg)
+
+
 def test_config_requires_limits(tmp_path):
     cfg = tmp_path / "bench.toml"
     cfg.write_text('[psu]\nport = "COM4"\n')
