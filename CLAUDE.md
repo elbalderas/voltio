@@ -23,7 +23,14 @@ cmake --build build-win
 # Output: build-win/bin/voltio.exe  and  build-win/bin/voltio.dll
 ```
 
-There are no automated tests. Manual verification requires a physical PSU on a serial port.
+There are no automated tests for the C code. Manual verification requires a physical PSU on a serial port.
+
+MCP server (`mcp/`, Python, separate from CMake):
+
+```sh
+cd mcp && python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
+.venv/bin/pytest            # uses tests/fake_voltio.py, no PSU needed
+```
 
 ## Architecture
 
@@ -40,6 +47,9 @@ Value encoding is internal: 3-digit ASCII × scale factor. Voltage is always sca
 **Consumers** (`voltio_cli.c`, `voltio_dll.c`)  
 `voltio_cli.c` — standalone executable; all output is JSON to stdout (errors to stderr). Global options `--port` and `--dp` come before the command.  
 `voltio_dll.c` — Windows-only DLL exporting a flat C API (`Voltio_Open`, `Voltio_SetVoltage`, etc.) for use from CANoe CAPL via `loadDll`/`callDll`. The DLL holds a single global context. `Voltio_OpenDp(port, dp)` selects current decimal places (`Voltio_Open` = dp 1). `Voltio_ReadDisplay()` takes one `GETD` sample that the `Voltio_Display*()` getters then return without further I/O.
+
+**MCP server** (`mcp/voltio_mcp/`)  
+Wraps the CLI (`backend.py` runs it and parses its JSON) so a coding agent can drive the PSU. `bench.py` enforces the bench limits from a TOML config, programs OVP/OCP lazily, and writes a JSONL audit log; `server.py` defines the MCP tools (`status`, `get_limits`, `measure`, `set`, `output`, `power_cycle`) on the `mcp` 2.x SDK (`MCPServer`). **The CLI's JSON field names are a contract with `backend.py`/`bench.py` and `tests/fake_voltio.py`** — change them together.
 
 ## Compiler flags
 

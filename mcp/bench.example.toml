@@ -1,0 +1,35 @@
+# voltio-mcp bench configuration
+#
+# Copy this outside the repo (one per bench), set the values for your ECU, and
+# point the server at it with --config or $VOLTIO_MCP_CONFIG.
+
+[psu]
+# The voltio CLI. A plain command on PATH, a full path, or a list:
+#   cli = "C:/tools/voltio/voltio.exe"
+#   cli = ["wsl", "voltio"]
+cli = "voltio"
+port = "COM4"                 # macOS: "/dev/cu.usbserial-XXXX" (cu.*, not tty.*)
+dp = 1                        # 2 for the 1685B, 1 for every other model
+timeout_s = 5.0               # per CLI call
+
+[limits]
+# Hard caps. The server refuses any setpoint above these, whatever the agent asks.
+max_voltage_V = 14.0
+max_current_A = 3.0
+# Optional hardware protection, programmed into the PSU before the first command
+# that can energise the load. Must be >= the caps above.
+ovp_V = 15.0
+ocp_A = 3.5
+
+[power_cycle]
+min_off_ms = 100
+max_off_ms = 60000
+
+[measure]
+max_duration_s = 300
+min_interval_ms = 250         # each sample is a full serial round-trip
+
+[audit]
+# JSON Lines, one entry per tool call. Relative paths are relative to this file.
+# Set to "" to disable.
+log = "voltio-audit.jsonl"

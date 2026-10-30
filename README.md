@@ -12,6 +12,7 @@ Supported models: 1685B, 1687B, 1688B, 1900B, 1901B, 1902B — any unit speaking
 | `voltio.dll` | Windows | Flat C API for CANoe CAPL via `loadDll`/`callDll` |
 | `voltio.cin` | CANoe | CAPL wrappers + settling check + example test case |
 | `libvoltio` core | all | Platform-agnostic C API (`voltio.h`) to embed in your own tools |
+| `voltio-mcp` | all (Python 3.11+) | MCP server so coding agents can drive the PSU within bench limits — see [`mcp/`](mcp/README.md) |
 
 ## Build
 
