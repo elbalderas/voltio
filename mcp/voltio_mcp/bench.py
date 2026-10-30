@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -65,6 +66,11 @@ class AuditLog:
             pass
 
 
+def _quantize(value: float, scale: int) -> float:
+    """Round to the PSU's resolution the way the C encoder does (round half up)."""
+    return math.floor(value * scale + 0.5) / scale
+
+
 def _stats(values: list[float]) -> dict:
     return {
         "min": round(min(values), 3),
@@ -113,12 +119,26 @@ class Bench:
             self.psu.limits(ovp=self.cfg.ovp_V, ocp=self.cfg.ocp_A)
         self._protection_applied = True
 
-    def _check_setpoints(self, voltage: float | None, current: float | None) -> None:
+    def _check_setpoints(self, voltage: float | None, current: float | None,
+                         requested: tuple[float | None, float | None] = (None, None)) -> None:
+        """Check setpoints against the bench caps.
+
+        `requested` holds the values before quantization, so a refusal can say
+        when rounding to device resolution is what pushed a value over the cap.
+        """
         cfg = self.cfg
+
+        def show(value, req, unit):
+            if req is None or req == value:
+                return f"{value} {unit}"
+            return f"{req} {unit} ({value} at device resolution)"
+
         if voltage is not None and not 0 <= voltage <= cfg.max_voltage_V:
-            raise LimitError(f"voltage {voltage} V is outside the bench limit 0..{cfg.max_voltage_V} V")
+            raise LimitError(f"voltage {show(voltage, requested[0], 'V')} is outside the bench limit "
+                             f"0..{cfg.max_voltage_V} V")
         if current is not None and not 0 <= current <= cfg.max_current_A:
-            raise LimitError(f"current {current} A is outside the bench limit 0..{cfg.max_current_A} A")
+            raise LimitError(f"current {show(current, requested[1], 'A')} is outside the bench limit "
+                             f"0..{cfg.max_current_A} A")
 
     def _check_present_setpoints(self) -> dict:
         """Refuse to energise if someone set the PSU beyond the limits from the front panel."""
@@ -155,9 +175,13 @@ class Bench:
         def run():
             if voltage_V is None and current_A is None:
                 raise LimitError("give voltage_V and/or current_A")
-            self._check_setpoints(voltage_V, current_A)
+            # Check what the PSU will actually be programmed to, not the raw request:
+            # with a 13.95 V cap, 13.95 would otherwise pass and be encoded as 14.0.
+            v = None if voltage_V is None else _quantize(voltage_V, 10)
+            a = None if current_A is None else _quantize(current_A, 100 if self.cfg.dp == 2 else 10)
+            self._check_setpoints(v, a, requested=(voltage_V, current_A))
             self._ensure_protection()
-            return self.psu.set(voltage_V, current_A)
+            return self.psu.set(v, a)
 
         return self._audited("set", args, run)
 

@@ -12,6 +12,13 @@ from voltio_mcp.server import create_server, main
 from conftest import write_config
 
 
+def make_bench(cfg_path, fake_time, audit_log=None):
+    cfg = load_config(cfg_path)
+    backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
+    log = AuditLog(cfg.audit_log if audit_log is None else audit_log)
+    return Bench(cfg, backend, log, sleep=fake_time.sleep, clock=fake_time.clock)
+
+
 def commands(psu):
     return [c[0] for c in psu.calls()]
 
@@ -22,11 +29,29 @@ def test_set_within_limits(bench, psu):
     assert bench.set(12.0, 2.0) == {"voltage_set_V": 12.0, "current_set_A": 2.0}
 
 
-@pytest.mark.parametrize("v,a", [(14.1, None), (None, 3.01), (-1.0, None)])
+@pytest.mark.parametrize("v,a", [(14.1, None), (None, 3.1), (-1.0, None)])
 def test_set_outside_limits_never_reaches_psu(bench, psu, v, a):
     with pytest.raises(LimitError):
         bench.set(v, a)
     assert "set" not in commands(psu)
+
+
+def test_setpoint_quantized_above_cap_is_refused(tmp_path, psu, fake_time):
+    cfg_path = write_config(tmp_path)
+    cfg_path.write_text(cfg_path.read_text().replace("max_voltage_V = 14.0", "max_voltage_V = 13.95"))
+    bench = make_bench(cfg_path, fake_time)
+    with pytest.raises(LimitError, match="14.0 at device resolution"):
+        bench.set(13.95, None)
+    assert "set" not in commands(psu)
+    assert bench.set(13.9, None)["voltage_set_V"] == 13.9
+
+
+def test_setpoint_sent_quantized(tmp_path, psu, fake_time):
+    cfg_path = write_config(tmp_path)
+    cfg_path.write_text(cfg_path.read_text().replace("dp = 1", "dp = 2"))
+    bench = make_bench(cfg_path, fake_time)
+    bench.set(None, 1.004)
+    assert ["set", "--current", "1.000"] in psu.calls()
 
 
 def test_protection_programmed_before_first_write(bench, psu):
@@ -129,9 +154,7 @@ def _unwritable_log(tmp_path):
 
 
 def test_unwritable_audit_log_never_changes_outcome(tmp_path, psu, fake_time):
-    cfg = load_config(write_config(tmp_path))
-    backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
-    bench = Bench(cfg, backend, AuditLog(_unwritable_log(tmp_path)), sleep=fake_time.sleep, clock=fake_time.clock)
+    bench = make_bench(write_config(tmp_path), fake_time, audit_log=_unwritable_log(tmp_path))
     assert bench.set(12.0, 1.0)["voltage_set_V"] == 12.0
     with pytest.raises(LimitError):
         bench.set(30.0, None)
