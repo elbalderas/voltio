@@ -119,11 +119,26 @@ class Bench:
         Done lazily rather than at startup so the server still starts (and
         `status` still works) when the PSU is unplugged.
         """
+        # Every caller (set, output on, power_cycle) holds _write_lock, so this check-then-act can't race.
         if self._protection_applied:
             return
         if self.cfg.ovp_V is not None or self.cfg.ocp_A is not None:
             self.psu.limits(ovp=self.cfg.ovp_V, ocp=self.cfg.ocp_A)
         self._protection_applied = True
+
+    def _verify_protection(self) -> None:
+        """Re-program OVP/OCP if they no longer match the config (e.g. changed from the front panel)."""
+        cfg = self.cfg
+        if cfg.ovp_V is None and cfg.ocp_A is None:
+            return
+        hw = self.psu.limits()
+        drifted = (
+            (cfg.ovp_V is not None and abs(hw["ovp_V"] - cfg.ovp_V) > 0.001)
+            or (cfg.ocp_A is not None and abs(hw["ocp_A"] - cfg.ocp_A) > 0.001)
+        )
+        if drifted:
+            self.psu.limits(ovp=cfg.ovp_V, ocp=cfg.ocp_A)
+            self.audit.write("protection_reasserted", {"was": hw})
 
     def _check_setpoints(self, voltage: float | None, current: float | None,
                          requested: tuple[float | None, float | None] = (None, None)) -> None:
@@ -203,6 +218,7 @@ class Bench:
                 raise LimitError("state must be 'on' or 'off'")
             with self._write_lock:
                 self._ensure_protection()
+                self._verify_protection()
                 self._check_present_setpoints()
                 return self.psu.output(True)
 
@@ -219,6 +235,7 @@ class Bench:
                 # Check before switching off, so we never leave the ECU unpowered
                 # because the "on" half would be refused.
                 self._ensure_protection()
+                self._verify_protection()
                 self._check_present_setpoints()
                 self.psu.output(False)
                 aborted = {"off_ms": off_ms, "output": "off", "aborted": True}

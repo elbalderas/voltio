@@ -61,6 +61,30 @@ def test_protection_programmed_before_first_write(bench, psu):
     assert commands(psu).count("limits") == 1
 
 
+def test_protection_drift_reasserted_on_energise(bench, psu, tmp_path):
+    def protection_writes():
+        return [c for c in psu.calls() if c[0] == "limits" and "--ovp" in c]
+
+    bench.set(12.0, 1.0)  # programs 15.0 / 3.5
+    psu.update(ovp=25.0)  # someone changed OVP on the front panel
+    bench.output("on")
+    assert psu.state()["ovp"] == 15.0
+    entries = [json.loads(l) for l in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    reasserted = [e for e in entries if e["tool"] == "protection_reasserted"]
+    assert len(reasserted) == 1 and reasserted[0]["args"]["was"]["ovp_V"] == 25.0
+
+    writes = len(protection_writes())
+    bench.output("on")  # no drift this time: read only
+    assert len(protection_writes()) == writes
+
+
+def test_protection_drift_reasserted_on_power_cycle(bench, psu):
+    bench.set(12.0, 1.0)  # programs 15.0 / 3.5
+    psu.update(on=True, ocp=5.0)
+    bench.power_cycle(500)
+    assert psu.state()["ocp"] == 3.5
+
+
 def test_output_on_refused_when_panel_setpoints_exceed_limits(bench, psu):
     psu.update(v_set=24.0, i_set=1.0)
     with pytest.raises(LimitError, match="call `set` first"):
