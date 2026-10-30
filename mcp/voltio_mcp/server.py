@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hmac
 import logging
 import os
 import sys
@@ -14,7 +15,11 @@ import anyio
 import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from starlette.datastructures import Headers
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .backend import CliBackend, VoltioError
 from .bench import AuditLog, Bench, LimitError
@@ -34,6 +39,48 @@ Controls a bench power supply that feeds the device under test (an ECU).
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False)
+
+
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+# Host/Origin allow-lists for loopback binds: blocks DNS-rebinding / cross-site
+# requests from a browser on the bench PC.
+LOOPBACK_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+)
+
+
+class BearerTokenMiddleware:
+    """Reject HTTP requests that don't carry `Authorization: Bearer <token>`."""
+
+    def __init__(self, app: ASGIApp, token: str):
+        self.app = app
+        self._expected = f"Bearer {token}".encode()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":  # lifespan events pass through
+            await self.app(scope, receive, send)
+            return
+        # Starlette decodes headers as latin-1, so this recovers the raw bytes.
+        got = Headers(scope=scope).get("authorization", "").encode("latin-1")
+        if not hmac.compare_digest(got, self._expected):
+            response = Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+def http_app(server: MCPServer, host: str, token: str | None) -> ASGIApp:
+    """The streamable-http ASGI app with this server's security settings applied."""
+    # Loopback: explicit Host/Origin allow-lists. Remote binds can't use a
+    # loopback allow-list; the bearer token is their protection.
+    security = LOOPBACK_SECURITY if host in LOOPBACK_HOSTS else None
+    app: ASGIApp = server.streamable_http_app(transport_security=security, host=host)
+    if token:
+        app = BearerTokenMiddleware(app, token)
+    return app
 
 
 def _call(fn, *args, **kwargs) -> dict:
@@ -106,6 +153,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
     p.add_argument("--host", default="127.0.0.1", help="HTTP bind address (streamable-http only)")
     p.add_argument("--http-port", type=int, default=8765, help="HTTP port (streamable-http only)")
+    p.add_argument("--allow-remote", action="store_true",
+                   help="allow binding a non-loopback --host (streamable-http only)")
+    p.add_argument("--http-token", default=os.environ.get("VOLTIO_MCP_TOKEN"),
+                   help="require 'Authorization: Bearer <token>' on every HTTP request "
+                        "(default: $VOLTIO_MCP_TOKEN; streamable-http only)")
     args = p.parse_args(argv)
 
     # stdout carries the MCP protocol on stdio; logs must go to stderr.
@@ -118,9 +170,12 @@ def main(argv: list[str] | None = None) -> None:
     except ConfigError as e:
         p.error(str(e))
 
-    if args.transport == "streamable-http" and args.host not in ("127.0.0.1", "localhost", "::1"):
-        log.warning("listening on %s without authentication: anyone who can reach this port can control the PSU",
-                    args.host)
+    if args.transport == "streamable-http" and args.host not in LOOPBACK_HOSTS:
+        if not args.allow_remote:
+            p.error(f"refusing to bind {args.host} without --allow-remote")
+        if not args.http_token:
+            log.warning("listening on %s without authentication: anyone who can reach this port can control the PSU",
+                        args.host)
 
     backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
     audit = AuditLog(cfg.audit_log)
@@ -143,7 +198,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.transport == "stdio":
         server.run()
     else:
-        server.run("streamable-http", host=args.host, port=args.http_port)
+        import uvicorn
+
+        app = http_app(server, args.host, args.http_token)
+        uvicorn.run(app, host=args.host, port=args.http_port, log_level=server.settings.log_level.lower())
 
 
 if __name__ == "__main__":

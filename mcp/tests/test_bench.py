@@ -11,7 +11,10 @@ import pytest
 from voltio_mcp.backend import CliBackend, VoltioError
 from voltio_mcp.bench import AuditLog, Bench, LimitError
 from voltio_mcp.config import ConfigError, load_config
-from voltio_mcp.server import create_server, main
+from starlette.responses import Response
+from starlette.testclient import TestClient
+
+from voltio_mcp.server import BearerTokenMiddleware, create_server, http_app, main
 
 from conftest import write_config
 
@@ -368,3 +371,53 @@ def test_missing_cli_field_is_tool_error(bench, psu):
     with pytest.raises(Exception, match="missing field 'voltage_set_V'") as exc:
         asyncio.run(server.call_tool("output", {"state": "on"}))
     assert not isinstance(exc.value, KeyError)
+
+
+# --- streamable-http security ------------------------------------------------------
+
+def test_http_refuses_non_loopback_bind_without_allow_remote(tmp_path, capsys):
+    cfg = write_config(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["--config", str(cfg), "--transport", "streamable-http", "--host", "0.0.0.0"])
+    assert "--allow-remote" in capsys.readouterr().err
+
+
+def _ok_app():
+    async def app(scope, receive, send):
+        await Response("ok")(scope, receive, send)
+    return app
+
+
+@pytest.mark.parametrize("headers,code", [
+    ({}, 401),
+    ({"Authorization": "Bearer wrong"}, 401),
+    ({"Authorization": "secret"}, 401),
+    ({"Authorization": "Bearer secret"}, 200),
+])
+def test_bearer_token_middleware(headers, code):
+    client = TestClient(BearerTokenMiddleware(_ok_app(), "secret"))
+    assert client.get("/mcp", headers=headers).status_code == code
+
+
+def test_http_app_loopback_rejects_foreign_origin(bench):
+    app = http_app(create_server(bench), "127.0.0.1", None)
+    headers = {"host": "127.0.0.1:8765", "content-type": "application/json",
+               "accept": "application/json, text/event-stream"}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    with TestClient(app) as client:
+        r = client.post("/mcp", json=body, headers={**headers, "origin": "http://evil.example"})
+        assert r.status_code == 403
+        r = client.post("/mcp", json=body, headers={**headers, "host": "evil.example"})
+        assert r.status_code == 421
+
+
+def test_http_app_requires_token_when_set(bench):
+    app = http_app(create_server(bench), "127.0.0.1", "secret")
+    with TestClient(app) as client:
+        assert client.post("/mcp", json={}, headers={"host": "127.0.0.1:8765"}).status_code == 401
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
+        r = client.post("/mcp", json=init, headers={
+            "host": "127.0.0.1:8765", "origin": "http://localhost:3000", "authorization": "Bearer secret",
+            "accept": "application/json, text/event-stream"})
+        assert r.status_code == 200, r.text

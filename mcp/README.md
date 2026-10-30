@@ -59,9 +59,24 @@ voltio-mcp --config C:/bench/voltio.toml
 ```
 
 The server speaks MCP on stdio by default. If the agent runs on another machine
-than the bench, use `--transport streamable-http --host 127.0.0.1 --http-port 8765`.
-There's no authentication, so expose it only through an SSH tunnel or a trusted
-network.
+than the bench, use `--transport streamable-http --host 127.0.0.1 --http-port 8765`
+and reach it through an SSH tunnel (recommended):
+
+```sh
+ssh -L 8765:127.0.0.1:8765 bench-pc     # then point the agent at http://127.0.0.1:8765/mcp
+```
+
+HTTP security:
+
+- **Loopback only by default.** A non-loopback `--host` (e.g. `0.0.0.0`) is refused
+  unless you also pass `--allow-remote`.
+- **Host/Origin checks.** On a loopback bind, requests with a foreign `Host` or
+  `Origin` header are rejected, so a web page open on the bench PC can't drive the PSU.
+- **Bearer token.** Set `VOLTIO_MCP_TOKEN` (or pass `--http-token`) and every HTTP
+  request must carry `Authorization: Bearer <token>`. Strongly recommended with
+  `--allow-remote`; the server warns if it's missing.
+
+None of this applies to stdio.
 
 ## opencode
 
