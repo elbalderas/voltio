@@ -1,5 +1,6 @@
 import asyncio
 import json
+import types
 
 import pytest
 
@@ -141,6 +142,15 @@ def test_config_rejects_bad_psu_settings(tmp_path, psu_toml, match):
     cfg.write_text(f"[psu]\n{psu_toml}\n\n[limits]\nmax_voltage_V = 14.0\nmax_current_A = 3.0\n")
     with pytest.raises(ConfigError, match=match):
         load_config(cfg)
+
+
+def test_config_keeps_windows_backslashes(tmp_path, monkeypatch):
+    # Patch only config's view of os; patching os.name globally breaks pathlib.
+    monkeypatch.setattr("voltio_mcp.config.os", types.SimpleNamespace(name="nt"))
+    cfg = tmp_path / "bench.toml"
+    cfg.write_text("[psu]\ncli = 'C:\\tools\\voltio.exe'\nport = \"COM4\"\n\n"
+                   "[limits]\nmax_voltage_V = 14.0\nmax_current_A = 3.0\n")
+    assert load_config(cfg).cli == ["C:\\tools\\voltio.exe"]
 
 
 def test_config_requires_limits(tmp_path):

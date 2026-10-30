@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import tomllib
 from dataclasses import dataclass
@@ -62,7 +63,7 @@ def load_config(path: str | Path) -> Config:
 
     cli = psu.get("cli", "voltio")
     if isinstance(cli, str):
-        cli = shlex.split(cli, posix=True)
+        cli = shlex.split(cli, posix=(os.name != "nt"))
     if not cli or not all(isinstance(c, str) for c in cli):
         raise ConfigError("'cli' must be a command string or a list of strings")
 

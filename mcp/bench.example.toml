@@ -7,6 +7,9 @@
 # The voltio CLI. A plain command on PATH, a full path, or a list:
 #   cli = "C:/tools/voltio/voltio.exe"
 #   cli = ["wsl", "voltio"]
+# On Windows, prefer the list form for paths with backslashes or spaces, using a
+# TOML literal (single-quoted) string so backslashes are kept as-is:
+#   cli = ['C:\tools\voltio.exe']
 cli = "voltio"
 port = "COM4"                 # macOS: "/dev/cu.usbserial-XXXX" (cu.*, not tty.*)
 dp = 1                        # 2 for the 1685B, 1 for every other model
