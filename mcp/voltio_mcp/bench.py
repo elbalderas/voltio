@@ -79,6 +79,17 @@ def _stats(values: list[float]) -> dict:
     }
 
 
+AUDIT_MAX_SAMPLES = 10
+
+
+def _truncate_samples(result: dict) -> dict:
+    """Keep the audit log small: store only the first few measure samples."""
+    data = result.get("data")
+    if data is None or len(data) <= AUDIT_MAX_SAMPLES:
+        return result
+    return {**result, "data": data[:AUDIT_MAX_SAMPLES], "data_truncated": len(data)}
+
+
 class Bench:
     def __init__(
         self,
@@ -104,13 +115,15 @@ class Bench:
 
     # --- helpers -------------------------------------------------------------
 
-    def _audited(self, tool: str, args: dict, fn: Callable[[], dict]) -> dict:
+    def _audited(self, tool: str, args: dict, fn: Callable[[], dict],
+                 redact: Callable[[dict], dict] | None = None) -> dict:
+        """Run fn and log it. `redact` shrinks what goes to the log, never the returned result."""
         try:
             result = fn()
         except Exception as e:
             self.audit.write(tool, args, error=f"{type(e).__name__}: {e}")
             raise
-        self.audit.write(tool, args, result=result)
+        self.audit.write(tool, args, result=redact(result) if redact else result)
         return result
 
     def _ensure_protection(self) -> None:
@@ -256,7 +269,9 @@ class Bench:
 
         return self._audited("power_cycle", {"off_ms": off_ms}, run)
 
-    def measure(self, duration_s: float, interval_ms: int = 500, include_samples: bool = False) -> dict:
+    def measure(self, duration_s: float, interval_ms: int = 500, include_samples: bool = False,
+                stop: threading.Event | None = None) -> dict:
+        """Sample V/I over time. Setting `stop` ends the run early (e.g. when the client cancels)."""
         args = {"duration_s": duration_s, "interval_ms": interval_ms, "include_samples": include_samples}
 
         def run():
@@ -267,9 +282,13 @@ class Bench:
                 raise LimitError(f"interval_ms must be >= {cfg.min_interval_ms}")
 
             samples = []
+            stopped = False
             start = self._clock()
             next_t = start
             while True:
+                if stop is not None and stop.is_set():
+                    stopped = True
+                    break
                 st = self.psu.status()
                 samples.append({
                     "t_s": round(self._clock() - start, 3),
@@ -282,7 +301,13 @@ class Bench:
                     break
                 delay = next_t - self._clock()
                 if delay > 0:
-                    self._sleep(delay)
+                    if stop is not None:
+                        self._wait(stop, delay)
+                    else:
+                        self._sleep(delay)
+
+            if not samples:
+                raise VoltioError("measurement cancelled")
 
             elapsed = samples[-1]["t_s"]
             result = {
@@ -296,6 +321,8 @@ class Bench:
             }
             if include_samples:
                 result["data"] = samples
+            if stopped:
+                result["stopped_early"] = True
             return result
 
-        return self._audited("measure", args, run)
+        return self._audited("measure", args, run, redact=_truncate_samples)

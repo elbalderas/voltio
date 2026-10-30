@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import logging
 import os
 import sys
+import threading
 from typing import Literal
 
+import anyio
+import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -56,14 +60,26 @@ def create_server(bench: Bench) -> MCPServer:
         return _call(bench.get_limits)
 
     @mcp.tool(name="measure", annotations=READ_ONLY)
-    def measure(duration_s: float, interval_ms: int = 500, include_samples: bool = False) -> dict:
+    async def measure(duration_s: float, interval_ms: int = 500, include_samples: bool = False) -> dict:
         """Sample measured voltage and current over time and return min/max/avg.
 
         Use for sleep-current checks, inrush and load behaviour. Each sample is a
         serial round-trip, so the real spacing may be longer than interval_ms
         (see actual_interval_ms). Set include_samples to get every point.
+        If the run is stopped early, the result has stopped_early: true.
         """
-        return _call(bench.measure, duration_s, interval_ms, include_samples)
+        # The SDK runs sync tools in a thread it can't interrupt, so a cancelled
+        # call would keep polling the serial port for up to max_duration_s.
+        # Run it ourselves and signal the loop to stop when the call is cancelled.
+        stop = threading.Event()
+        fn = functools.partial(_call, bench.measure, duration_s, interval_ms, include_samples, stop=stop)
+        try:
+            # abandon_on_cancel: deliver the cancel now (so we can set `stop`)
+            # instead of after the thread finishes on its own.
+            return await anyio.to_thread.run_sync(fn, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            stop.set()
+            raise
 
     @mcp.tool(name="set", annotations=WRITE)
     def set_(voltage_V: float | None = None, current_A: float | None = None) -> dict:

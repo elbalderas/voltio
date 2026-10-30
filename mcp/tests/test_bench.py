@@ -1,6 +1,10 @@
 import asyncio
 import json
+import threading
+import time
 import types
+
+import anyio
 
 import pytest
 
@@ -182,6 +186,64 @@ def test_measure_flags_cc(bench, psu):
     r = bench.measure(duration_s=1.0, interval_ms=500, include_samples=True)
     assert r["cc_samples"] == r["samples"]
     assert len(r["data"]) == r["samples"]
+
+
+def test_measure_stops_early(bench, psu, fake_time):
+    psu.update(v_set=12.0, i_set=1.0, on=True, load_A=0.25)
+    stop = threading.Event()
+    waits = []
+
+    def wait(ev, t):
+        waits.append(t)
+        fake_time.now += t
+        if len(waits) == 2:  # after the 2nd sample
+            ev.set()
+        return ev.is_set()
+
+    bench._wait = wait
+    r = bench.measure(duration_s=10, interval_ms=500, stop=stop)
+    assert r["stopped_early"] is True
+    assert r["samples"] == 2
+    assert r["current_A"] == {"min": 0.25, "max": 0.25, "avg": 0.25}
+    assert commands(psu).count("status") == 2
+
+
+def test_measure_cancelled_before_first_sample(bench, psu):
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(VoltioError, match="cancelled"):
+        bench.measure(duration_s=1, stop=stop)
+    assert "status" not in commands(psu)
+
+
+def test_measure_audit_truncates_samples(bench, psu, tmp_path):
+    psu.update(v_set=12.0, i_set=1.0, on=True)
+    r = bench.measure(duration_s=10, interval_ms=500, include_samples=True)
+    assert r["samples"] == 21 and len(r["data"]) == 21 and "data_truncated" not in r
+    entry = json.loads((tmp_path / "audit.jsonl").read_text().splitlines()[-1])
+    assert len(entry["result"]["data"]) == 10
+    assert entry["result"]["data_truncated"] == 21
+
+
+def test_measure_tool_cancellation_stops_polling(bench):
+    seen = {}
+
+    def fake_measure(duration_s, interval_ms, include_samples, stop):
+        seen["stop"] = stop
+        stop.wait(5)  # stands in for a long serial polling loop
+        return {"samples": 0}
+
+    bench.measure = fake_measure
+    server = create_server(bench)
+
+    async def go():
+        with anyio.move_on_after(0.2):
+            await server.call_tool("measure", {"duration_s": 300})
+
+    t0 = time.monotonic()
+    anyio.run(go)
+    assert seen["stop"].is_set()
+    assert time.monotonic() - t0 < 2
 
 
 @pytest.mark.parametrize("dur,interval", [(0, 500), (301, 500), (1, 50)])

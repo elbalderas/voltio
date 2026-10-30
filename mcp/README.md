@@ -14,7 +14,8 @@ The safety rules live in the server, not in the agent's prompt:
   `power_cycle` checks *before* switching off, so it never leaves the ECU unpowered.
 - **Off is always allowed.** `output off` aborts an in-flight `power_cycle`; the
   output then stays off.
-- **Audit log.** Every call, refusal and error is written as JSON Lines.
+- **Audit log.** Every call, refusal and error is written as JSON Lines (`measure`
+  samples are capped at the first 10, with `data_truncated` giving the total).
 
 ## Tools
 
@@ -22,7 +23,7 @@ The safety rules live in the server, not in the agent's prompt:
 |---|---|---|
 | `status` | read | Setpoints, measured V/I/W, mode (CV or CC) |
 | `get_limits` | read | PSU OVP/OCP plus the bench limits |
-| `measure(duration_s, interval_ms=500, include_samples=false)` | read | Samples V/I over time; returns min/max/avg and a count of CC samples |
+| `measure(duration_s, interval_ms=500, include_samples=false)` | read | Samples V/I over time; returns min/max/avg and a count of CC samples. Cancelling the call stops the sampling; a run cut short returns `stopped_early: true` |
 | `set(voltage_V?, current_A?)` | write | Changes setpoints within the bench limits |
 | `output(state)` | write | `"on"` / `"off"` |
 | `power_cycle(off_ms=1000)` | write | Off, wait, on |
