@@ -9,7 +9,7 @@
  *
  *   on start {
  *     hVoltio = loadDll("voltio.dll");
- *     Voltio_Open("COM4");
+ *     Voltio_Open("COM4");          // or Voltio_OpenDp("COM4", 2) for 1685B
  *   }
  *   on stopMeasurement {
  *     Voltio_Close();
@@ -26,14 +26,17 @@ variables
 /* -------------------------------------------------------------------------
  * Lifecycle
  * ---------------------------------------------------------------------- */
-void Voltio_Open(char port[])
+/* dp = current decimal places: 2 for 1685B, 1 for every other model */
+void Voltio_OpenDp(char port[], long dp)
 {
     hVoltio = loadDll("voltio.dll");
-    if (callDll(hVoltio, "Voltio_Open", port) == 0)
+    if (callDll(hVoltio, "Voltio_OpenDp", port, dp) == 0)
         write("[Voltio] ERROR: could not open port %s", port);
     else
         write("[Voltio] Connected on %s", port);
 }
+
+void Voltio_Open(char port[]) { Voltio_OpenDp(port, 1); }
 
 void Voltio_Close()
 {
@@ -61,6 +64,14 @@ double Voltio_GetCurrentActual()  { return callDll(hVoltio, "Voltio_GetCurrentAc
 double Voltio_GetPowerActual()    { return callDll(hVoltio, "Voltio_GetPowerActual"); }
 long   Voltio_GetMode()           { return callDll(hVoltio, "Voltio_GetMode"); }  /* 0=CV 1=CC */
 
+/* Snapshot: one query, then voltage/current/power/mode from the same sample.
+ * Voltio_ReadDisplay() returns 1 on success, 0 on error. */
+long   Voltio_ReadDisplay()       { return callDll(hVoltio, "Voltio_ReadDisplay"); }
+double Voltio_DisplayVoltage()    { return callDll(hVoltio, "Voltio_DisplayVoltage"); }
+double Voltio_DisplayCurrent()    { return callDll(hVoltio, "Voltio_DisplayCurrent"); }
+double Voltio_DisplayPower()      { return callDll(hVoltio, "Voltio_DisplayPower"); }
+long   Voltio_DisplayMode()       { return callDll(hVoltio, "Voltio_DisplayMode"); }  /* 0=CV 1=CC */
+
 /* -------------------------------------------------------------------------
  * Settling check
  *
@@ -75,9 +86,11 @@ long Voltio_WaitSettled(double v_expected, double tol_V, long timeout_ms)
     long   elapsed = 0;
     double v;
     while (elapsed < timeout_ms) {
-        v = Voltio_GetVoltageActual();
-        if (v >= 0.0 && abs(v - v_expected) <= tol_V) return 1;
-        if (Voltio_GetMode() == 1) return 0;
+        if (Voltio_ReadDisplay()) {
+            v = Voltio_DisplayVoltage();
+            if (abs(v - v_expected) <= tol_V) return 1;
+            if (Voltio_DisplayMode() == 1) return 0;
+        }
         wait(100);
         elapsed += 100;
     }
@@ -115,10 +128,15 @@ testcase TC_Voltio_12V_2A()
         return;
     }
 
-    v_actual = Voltio_GetVoltageActual();
-    i_actual = Voltio_GetCurrentActual();
-    pwr      = Voltio_GetPowerActual();
-    mode     = Voltio_GetMode();
+    if (!Voltio_ReadDisplay()) {
+        TestStepFail("Read failed", "could not read display values");
+        Voltio_OutputOff();
+        return;
+    }
+    v_actual = Voltio_DisplayVoltage();
+    i_actual = Voltio_DisplayCurrent();
+    pwr      = Voltio_DisplayPower();
+    mode     = Voltio_DisplayMode();
 
     TestStep("Voltio", "Voltage: %.2f V | Current: %.2f A | Power: %.2f W | Mode: %s",
              v_actual, i_actual, pwr, mode == 0 ? "CV" : "CC");

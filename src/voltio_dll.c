@@ -8,7 +8,7 @@
  *   variables { long hVoltio; }
  *   on start {
  *     hVoltio = loadDll("voltio.dll");
- *     callDll(hVoltio, "Voltio_Open", "COM4");
+ *     callDll(hVoltio, "Voltio_Open", "COM4");      // or Voltio_OpenDp("COM4", 2) for 1685B
  *     callDll(hVoltio, "Voltio_SetVoltage", 12.5);
  *     callDll(hVoltio, "Voltio_OutputOn");
  *   }
@@ -29,12 +29,19 @@ static Voltio_Context *g_ctx = NULL;
  * Lifecycle
  * ---------------------------------------------------------------------- */
 
-/** Open COM port. Returns 1 on success, 0 on failure. */
-EXPORT long Voltio_Open(const char *port)
+/** Open COM port. dp = current decimal places: 2 for 1685B, 1 otherwise.
+ *  Returns 1 on success, 0 on failure. */
+EXPORT long Voltio_OpenDp(const char *port, long dp)
 {
     if (g_ctx) { voltio_close(g_ctx); g_ctx = NULL; }
-    g_ctx = voltio_open(port, 1);   /* 1 decimal place for 1901B */
+    g_ctx = voltio_open(port, (int)dp);
     return (g_ctx && voltio_last_error(g_ctx)[0] == '\0') ? 1 : 0;
+}
+
+/** Open COM port with 1 current decimal place (all models except 1685B). */
+EXPORT long Voltio_Open(const char *port)
+{
+    return Voltio_OpenDp(port, 1);
 }
 
 EXPORT void Voltio_Close(void)
@@ -126,6 +133,39 @@ EXPORT long Voltio_GetMode(void)
     float v, i; int cc;
     return voltio_get_display(g_ctx, &v, &i, &cc) == VOLTIO_OK ? cc : -1;
 }
+
+/* -------------------------------------------------------------------------
+ * Display snapshot
+ *
+ * Each Voltio_Get*Actual() call above sends its own query, so separate
+ * calls can return values from different moments. Voltio_ReadDisplay()
+ * queries once; the Voltio_Display*() getters then return values from
+ * that one sample without touching the port.
+ * ---------------------------------------------------------------------- */
+
+static float g_disp_v  = -1.0f;
+static float g_disp_i  = -1.0f;
+static int   g_disp_cc = -1;
+
+/** Take one reading. Returns 1 on success, 0 on error (snapshot cleared). */
+EXPORT long Voltio_ReadDisplay(void)
+{
+    g_disp_v = -1.0f; g_disp_i = -1.0f; g_disp_cc = -1;
+    if (!g_ctx) return 0;
+    float v, i; int cc;
+    if (voltio_get_display(g_ctx, &v, &i, &cc) != VOLTIO_OK) return 0;
+    g_disp_v = v; g_disp_i = i; g_disp_cc = cc;
+    return 1;
+}
+
+EXPORT double Voltio_DisplayVoltage(void) { return (double)g_disp_v; }
+EXPORT double Voltio_DisplayCurrent(void) { return (double)g_disp_i; }
+EXPORT double Voltio_DisplayPower(void)
+{
+    return g_disp_cc < 0 ? -1.0 : (double)(g_disp_v * g_disp_i);
+}
+/** Returns 0=CV, 1=CC, -1=no valid snapshot */
+EXPORT long   Voltio_DisplayMode(void)    { return g_disp_cc; }
 
 /* -------------------------------------------------------------------------
  * Preset memory

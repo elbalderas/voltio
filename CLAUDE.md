@@ -35,11 +35,11 @@ Thin platform abstraction: open at 9600 8N1, write a buffer, read one byte, flus
 **Protocol driver** (`voltio.c`, `voltio.h`)  
 Owns an opaque `Voltio_Context` (serial handle + decimal-place config + last-error string). All PSU commands are CR-terminated ASCII; all responses end with `OK\r\n`. `send_command()` in `voltio.c` is the single I/O path — it flushes RX, writes, reads lines until `OK`, accumulates any data lines into a caller buffer.
 
-Value encoding is internal: 3-digit ASCII × scale factor (scale=10 for 1 d.p., scale=100 for 2 d.p., passed as `dp` to `voltio_open`). `GETD` (actual display readings) always returns 4-digit values decoded at fixed 100 scale. The `dp` parameter should be `1` for most 1900B models and `2` for models with two decimal places.
+Value encoding is internal: 3-digit ASCII × scale factor. Voltage is always scale 10 (1 d.p.). Current is scale 10 or 100 depending on `dp` passed to `voltio_open` — `2` for the 1685B (2 d.p. current, per the BK programming manual), `1` for every other model. `GETD` (actual display readings) always returns 4-digit values decoded at fixed 100 scale. Out-of-range values return `VOLTIO_ERR_RANGE` instead of being clamped.
 
 **Consumers** (`voltio_cli.c`, `voltio_dll.c`)  
-`voltio_cli.c` — standalone executable; all output is JSON to stdout (errors to stderr).  
-`voltio_dll.c` — Windows-only DLL exporting a flat C API (`Voltio_Open`, `Voltio_SetVoltage`, etc.) for use from CANoe CAPL via `loadDll`/`callDll`. The DLL holds a single global context.
+`voltio_cli.c` — standalone executable; all output is JSON to stdout (errors to stderr). Global options `--port` and `--dp` come before the command.  
+`voltio_dll.c` — Windows-only DLL exporting a flat C API (`Voltio_Open`, `Voltio_SetVoltage`, etc.) for use from CANoe CAPL via `loadDll`/`callDll`. The DLL holds a single global context. `Voltio_OpenDp(port, dp)` selects current decimal places (`Voltio_Open` = dp 1). `Voltio_ReadDisplay()` takes one `GETD` sample that the `Voltio_Display*()` getters then return without further I/O.
 
 ## Compiler flags
 

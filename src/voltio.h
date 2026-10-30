@@ -3,9 +3,12 @@
  *
  * Supports: 1685B, 1687B, 1688B, 1900B, 1901B, 1902B
  *
- * Value encoding (1901B, 1 decimal place):
- *   3-digit ASCII * 10  ->  12.5 V = "125"
+ * Value encoding (3 ASCII digits on the wire):
+ *   Voltage is always 1 decimal place   ->  12.5 V = "125"
+ *   Current is 1 decimal place on most models (2.5 A = "025") and
+ *   2 decimal places on the 1685B (2.50 A = "250") — see `dp` below.
  *   All encode/decode is handled internally; callers use plain floats.
+ *   Values that don't fit in 3 digits return VOLTIO_ERR_RANGE.
  */
 
 #ifndef VOLTIO_H
@@ -57,6 +60,12 @@ typedef struct {
 
 /* -------------------------------------------------------------------------
  * Lifecycle
+ *
+ * voltio_open() always returns a context unless out of memory; check
+ * voltio_last_error(ctx)[0] != '\0' to detect a failed open.
+ *
+ * @param dp  Decimal places for current values: 2 for the 1685B,
+ *            1 for every other model. Voltage is always 1 decimal place.
  * ---------------------------------------------------------------------- */
 Voltio_Context *voltio_open (const char *port, int dp);
 void            voltio_close(Voltio_Context *ctx);

@@ -1,7 +1,7 @@
 /**
  * serial.h  —  Platform-agnostic serial port HAL
  *
- * psu.c calls only these functions.  The implementation is selected at
+ * voltio.c calls only these functions.  The implementation is selected at
  * compile time:
  *   macOS / Linux  ->  serial_posix.c   (termios)
  *   Windows        ->  serial_win32.c   (Win32 CreateFile / ReadFile)
@@ -44,7 +44,8 @@ typedef enum {
  *                2-second read timeout.
  *
  * @param port    Platform port string:
- *                  macOS   ->  "/dev/tty.usbserial-XXXX"  or "/dev/cu.*"
+ *                  macOS   ->  "/dev/cu.usbserial-XXXX"  (not /dev/tty.*,
+ *                              which blocks on carrier detect)
  *                  Windows ->  "COM4"  (\\.\COM4 added internally)
  * @param error   Optional: caller-supplied buffer for a human-readable
  *                error message on failure (pass NULL to ignore).

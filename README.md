@@ -24,7 +24,7 @@ cmake --build build
 Cross-compile the Windows CLI and DLL from macOS/Linux (needs `brew install mingw-w64` or equivalent):
 
 ```sh
-cmake -G Ninja -B build-win -DCMAKE_TOOLCHAIN_FILE=toolchain-mingw64.cmake
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=toolchain-mingw64.cmake
 cmake --build build-win
 # → build-win/bin/voltio.exe  and  build-win/bin/voltio.dll
 ```
@@ -45,6 +45,9 @@ voltio --port <port> preset recall 2
 voltio --port <port> preset write 1 12.0 2.5
 voltio --port <port> limits [--ovp 15.0] [--ocp 5.0]
 voltio --port <port> max
+
+# 1685B only: current has two decimal places
+voltio --port <port> --dp 2 status
 ```
 
 Example output:
@@ -62,6 +65,8 @@ Example output:
 ```
 
 Errors go to stderr as JSON with `"status": "error"`; exit code is non-zero.
+Values that don't fit the protocol's 3-digit fields (e.g. `--voltage 120`)
+are rejected with an error rather than clamped.
 
 ## CANoe integration
 
@@ -70,7 +75,7 @@ Errors go to stderr as JSON with `"status": "error"`; exit code is non-zero.
 3. Open/close the connection around the measurement:
 
 ```c
-on start          { Voltio_Open("COM4"); }
+on start          { Voltio_Open("COM4"); }   // 1685B: Voltio_OpenDp("COM4", 2)
 on stopMeasurement { Voltio_Close(); }
 ```
 
@@ -81,13 +86,20 @@ output — the PSU has no ready flag and its readings lag output changes by
 up to ~1 s, so a fixed `wait()` is not reliable. `TC_Voltio_12V_2A` in
 `voltio.cin` shows the full pattern.
 
+Each `Voltio_Get*Actual()` call sends its own query, so separate calls can
+return values from different moments. To get voltage, current, power, and
+mode from a single sample, call `Voltio_ReadDisplay()` once and then
+`Voltio_DisplayVoltage()`, `Voltio_DisplayCurrent()`, `Voltio_DisplayPower()`,
+and `Voltio_DisplayMode()`.
+
 ## Protocol notes
 
 - Commands are CR-terminated ASCII; every response ends with `OK\r\n`.
-- Values are 3 ASCII digits × a scale factor. Most models use one decimal
-  place (`"125"` = 12.5 V, pass `dp=1` to `voltio_open`); two-decimal models
-  use `dp=2`. Actual display readings (`GETD`) are always 4 digits at two
-  decimals.
+- Set-values are 3 ASCII digits. Voltage always has one decimal place
+  (`"125"` = 12.5 V). Current has one decimal place on most models and two
+  on the 1685B (`"250"` = 2.50 A) — pass `dp=2` to `voltio_open` (or
+  `--dp 2` to the CLI) for the 1685B, `dp=1` otherwise. Actual display
+  readings (`GETD`) are always 4 digits at two decimals.
 - Preset responses (`GETM`) may arrive as one line per slot or all three
   slots concatenated on a single line; the driver handles both.
 - Output enable is inverted on the wire: `SOUT0` = on, `SOUT1` = off.
