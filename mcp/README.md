@@ -12,7 +12,8 @@ The safety rules live in the server, not in the agent's prompt:
 - **No surprise energising.** `output on` and `power_cycle` are refused if the PSU's
   current setpoints (for example, set from the front panel) exceed the limits.
   `power_cycle` checks *before* switching off, so it never leaves the ECU unpowered.
-- **Off is always allowed.**
+- **Off is always allowed.** `output off` aborts an in-flight `power_cycle`; the
+  output then stays off.
 - **Audit log.** Every call, refusal and error is written as JSON Lines.
 
 ## Tools

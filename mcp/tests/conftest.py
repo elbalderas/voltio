@@ -31,6 +31,7 @@ class FakeTime:
     def __init__(self):
         self.now = 0.0
         self.sleeps = []
+        self.waits = []
 
     def clock(self) -> float:
         return self.now
@@ -38,6 +39,12 @@ class FakeTime:
     def sleep(self, s: float) -> None:
         self.sleeps.append(s)
         self.now += s
+
+    def wait(self, ev, t: float) -> bool:
+        """Stand-in for Event.wait: time passes, returns whether the event is set."""
+        self.waits.append(t)
+        self.now += t
+        return ev.is_set()
 
 
 @pytest.fixture
@@ -78,4 +85,5 @@ def fake_time() -> FakeTime:
 def bench(tmp_path, psu, fake_time) -> Bench:
     cfg = load_config(write_config(tmp_path))
     backend = CliBackend(cfg.cli, cfg.port, cfg.dp, cfg.timeout_s)
-    return Bench(cfg, backend, AuditLog(cfg.audit_log), sleep=fake_time.sleep, clock=fake_time.clock)
+    return Bench(cfg, backend, AuditLog(cfg.audit_log), sleep=fake_time.sleep, clock=fake_time.clock,
+                 wait=fake_time.wait)

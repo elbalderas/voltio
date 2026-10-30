@@ -82,7 +82,29 @@ def test_power_cycle_order_and_timing(bench, psu, fake_time):
     assert bench.power_cycle(750) == {"off_ms": 750, "output": "on"}
     outs = [c for c in psu.calls() if c[0] == "output"]
     assert outs == [["output", "off"], ["output", "on"]]
-    assert fake_time.sleeps == [0.75]
+    assert fake_time.waits == [0.75]
+
+
+def test_output_off_aborts_power_cycle(bench, psu):
+    psu.update(v_set=12.0, i_set=1.0, on=True)
+
+    def wait(ev, t):
+        bench.output("off")  # agent's emergency off during the off-window
+        return True
+
+    bench._wait = wait
+    r = bench.power_cycle(500)
+    assert r == {"off_ms": 500, "output": "off", "aborted": True}
+    assert psu.state()["on"] is False
+    outs = [c for c in psu.calls() if c[0] == "output"]
+    assert ["output", "on"] not in outs[outs.index(["output", "off"]):]
+
+
+def test_stale_off_does_not_abort_later_power_cycle(bench, psu):
+    psu.update(v_set=12.0, i_set=1.0, on=True)
+    bench.output("off")
+    assert bench.power_cycle(500) == {"off_ms": 500, "output": "on"}
+    assert psu.state()["on"] is True
 
 
 def test_power_cycle_refused_before_switching_off(bench, psu):

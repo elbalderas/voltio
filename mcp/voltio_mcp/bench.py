@@ -88,13 +88,19 @@ class Bench:
         *,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        wait: Callable[[threading.Event, float], bool] = lambda ev, t: ev.wait(t),
     ):
         self.cfg = cfg
         self.psu = backend
         self.audit = audit or AuditLog(None)
         self._sleep = sleep
         self._clock = clock
+        self._wait = wait
         self._protection_applied = False
+        # Serializes writes that can energise the load. `output off` never takes
+        # it: it sets _abort instead, so it can't wait behind a power cycle.
+        self._write_lock = threading.Lock()
+        self._abort = threading.Event()
 
     # --- helpers -------------------------------------------------------------
 
@@ -173,28 +179,32 @@ class Bench:
         args = {"voltage_V": voltage_V, "current_A": current_A}
 
         def run():
-            if voltage_V is None and current_A is None:
-                raise LimitError("give voltage_V and/or current_A")
-            # Check what the PSU will actually be programmed to, not the raw request:
-            # with a 13.95 V cap, 13.95 would otherwise pass and be encoded as 14.0.
-            v = None if voltage_V is None else _quantize(voltage_V, 10)
-            a = None if current_A is None else _quantize(current_A, 100 if self.cfg.dp == 2 else 10)
-            self._check_setpoints(v, a, requested=(voltage_V, current_A))
-            self._ensure_protection()
-            return self.psu.set(v, a)
+            with self._write_lock:
+                if voltage_V is None and current_A is None:
+                    raise LimitError("give voltage_V and/or current_A")
+                # Check what the PSU will actually be programmed to, not the raw request:
+                # with a 13.95 V cap, 13.95 would otherwise pass and be encoded as 14.0.
+                v = None if voltage_V is None else _quantize(voltage_V, 10)
+                a = None if current_A is None else _quantize(current_A, 100 if self.cfg.dp == 2 else 10)
+                self._check_setpoints(v, a, requested=(voltage_V, current_A))
+                self._ensure_protection()
+                return self.psu.set(v, a)
 
         return self._audited("set", args, run)
 
     def output(self, state: str) -> dict:
         def run():
             if state == "off":
-                # Turning off is always allowed and never blocked by other checks.
+                # Turning off is always allowed and never blocked by other checks or
+                # by the write lock; it also aborts an in-flight power cycle.
+                self._abort.set()
                 return self.psu.output(False)
             if state != "on":
                 raise LimitError("state must be 'on' or 'off'")
-            self._ensure_protection()
-            self._check_present_setpoints()
-            return self.psu.output(True)
+            with self._write_lock:
+                self._ensure_protection()
+                self._check_present_setpoints()
+                return self.psu.output(True)
 
         return self._audited("output", {"state": state}, run)
 
@@ -203,14 +213,18 @@ class Bench:
             cfg = self.cfg
             if not cfg.min_off_ms <= off_ms <= cfg.max_off_ms:
                 raise LimitError(f"off_ms must be {cfg.min_off_ms}..{cfg.max_off_ms}")
-            # Check before switching off, so we never leave the ECU unpowered
-            # because the "on" half would be refused.
-            self._ensure_protection()
-            self._check_present_setpoints()
-            self.psu.output(False)
-            self._sleep(off_ms / 1000)
-            self.psu.output(True)
-            return {"off_ms": off_ms, "output": "on"}
+            with self._write_lock:
+                # Only an `output off` issued during this cycle may abort it.
+                self._abort.clear()
+                # Check before switching off, so we never leave the ECU unpowered
+                # because the "on" half would be refused.
+                self._ensure_protection()
+                self._check_present_setpoints()
+                self.psu.output(False)
+                if self._wait(self._abort, off_ms / 1000):
+                    return {"off_ms": off_ms, "output": "off", "aborted": True}
+                self.psu.output(True)
+                return {"off_ms": off_ms, "output": "on"}
 
         return self._audited("power_cycle", {"off_ms": off_ms}, run)
 
