@@ -175,3 +175,11 @@ def test_limit_refusal_is_tool_error(bench, psu):
     with pytest.raises(Exception, match="outside the bench limit"):
         asyncio.run(server.call_tool("set", {"voltage_V": 99.0}))
     assert "set" not in commands(psu)
+
+
+def test_missing_cli_field_is_tool_error(bench, psu):
+    psu.update(omit=["voltage_set_V"])
+    server = create_server(bench)
+    with pytest.raises(Exception, match="missing field 'voltage_set_V'") as exc:
+        asyncio.run(server.call_tool("output", {"state": "on"}))
+    assert not isinstance(exc.value, KeyError)

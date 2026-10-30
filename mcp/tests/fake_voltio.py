@@ -5,6 +5,7 @@ JSON file named by $FAKE_VOLTIO_STATE:
   - setpoints, output state, OVP/OCP
   - "load_A": current the simulated ECU draws when powered
   - "fail": if set, every command fails with this message
+  - "omit": list of field names to delete from the `status` output
   - "calls": every command run, appended for test assertions
 """
 
@@ -57,9 +58,12 @@ def main(argv):
         v = st["v_set"] if st["on"] else 0.0
         a = min(st["load_A"], st["i_set"]) if st["on"] else 0.0
         cc = st["on"] and st["load_A"] >= st["i_set"]
-        return ok(voltage_set_V=st["v_set"], current_set_A=st["i_set"],
-                  voltage_actual_V=v, current_actual_A=a, power_actual_W=round(v * a, 3),
-                  mode="CC" if cc else "CV")
+        out = dict(voltage_set_V=st["v_set"], current_set_A=st["i_set"],
+                   voltage_actual_V=v, current_actual_A=a, power_actual_W=round(v * a, 3),
+                   mode="CC" if cc else "CV")
+        for name in st.get("omit", []):
+            out.pop(name, None)
+        return ok(**out)
     if cmd == "set":
         v, a = opt(args, "--voltage"), opt(args, "--current")
         if v is not None:

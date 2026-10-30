@@ -37,6 +37,9 @@ def _call(fn, *args, **kwargs) -> dict:
         return fn(*args, **kwargs)
     except (LimitError, VoltioError) as e:
         raise ToolError(str(e)) from None
+    except KeyError as e:
+        # The CLI's JSON is a contract; a missing field means it drifted.
+        raise ToolError(f"unexpected CLI response: missing field {e}") from None
 
 
 def create_server(bench: Bench) -> MCPServer:
