@@ -5,6 +5,10 @@ JSON file named by $FAKE_VOLTIO_STATE:
   - setpoints, output state, OVP/OCP
   - "load_A": current the simulated ECU draws when powered
   - "fail": if set, every command fails with this message
+  - "fail_cmd": fail only commands whose "cmd args..." starts with this string
+    (message: "fail" if set, else a generic one)
+  - "fail_times": with "fail"/"fail_cmd", fail this many times, then succeed
+    (decremented in the state file); absent = always fail
   - "omit": list of field names to delete from the `status` output
   - "calls": every command run, appended for test assertions
 """
@@ -49,9 +53,17 @@ def main(argv):
         with open(path, "w") as f:
             json.dump(st, f)
 
-    if st.get("fail"):
+    if st.get("fail_cmd"):
+        failing = " ".join([cmd, *args]).startswith(st["fail_cmd"])
+    else:
+        failing = bool(st.get("fail"))
+    if failing and "fail_times" in st:
+        failing = st["fail_times"] > 0
+        if failing:
+            st["fail_times"] -= 1
+    if failing:
         save()
-        return err(st["fail"])
+        return err(st.get("fail") or f"simulated failure: {st['fail_cmd']}")
 
     if cmd == "status":
         save()

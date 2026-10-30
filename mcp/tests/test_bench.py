@@ -114,6 +114,27 @@ def test_power_cycle_refused_before_switching_off(bench, psu):
     assert psu.state()["on"] is True  # ECU left powered, not stranded off
 
 
+def test_power_cycle_retries_on_once(bench, psu, fake_time):
+    psu.update(v_set=12.0, i_set=1.0, on=True, fail_cmd="output on", fail_times=1)
+    assert bench.power_cycle(500) == {"off_ms": 500, "output": "on"}
+    assert psu.state()["on"] is True
+    assert fake_time.sleeps == [0.2]
+
+
+def test_power_cycle_reports_output_off_when_on_fails(bench, psu):
+    psu.update(v_set=12.0, i_set=1.0, on=True, fail_cmd="output on")
+    with pytest.raises(VoltioError, match="output is now OFF"):
+        bench.power_cycle(500)
+    assert psu.state()["on"] is False
+
+
+def test_output_off_during_retry_pause_aborts(bench, psu):
+    psu.update(v_set=12.0, i_set=1.0, on=True, fail_cmd="output on", fail_times=1)
+    bench._sleep = lambda s: bench.output("off")
+    assert bench.power_cycle(500)["aborted"] is True
+    assert psu.state()["on"] is False
+
+
 @pytest.mark.parametrize("off_ms", [10, 120_000])
 def test_power_cycle_off_time_bounds(bench, psu, off_ms):
     with pytest.raises(LimitError):

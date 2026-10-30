@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .backend import CliBackend
+from .backend import CliBackend, VoltioError
 from .config import Config
 
 log = logging.getLogger("voltio_mcp")
@@ -221,9 +221,20 @@ class Bench:
                 self._ensure_protection()
                 self._check_present_setpoints()
                 self.psu.output(False)
+                aborted = {"off_ms": off_ms, "output": "off", "aborted": True}
                 if self._wait(self._abort, off_ms / 1000):
-                    return {"off_ms": off_ms, "output": "off", "aborted": True}
-                self.psu.output(True)
+                    return aborted
+                try:
+                    self.psu.output(True)
+                except VoltioError as e:
+                    # A serial hiccup must not strand the ECU unpowered: retry once.
+                    self._sleep(0.2)
+                    if self._abort.is_set():  # `output off` arrived meanwhile; honour it
+                        return aborted
+                    try:
+                        self.psu.output(True)
+                    except VoltioError:
+                        raise VoltioError(f"{e}; PSU output is now OFF — the power cycle did not complete") from None
                 return {"off_ms": off_ms, "output": "on"}
 
         return self._audited("power_cycle", {"off_ms": off_ms}, run)
