@@ -92,6 +92,13 @@ def test_protection_drift_reasserted_on_power_cycle(bench, psu):
     assert psu.state()["ocp"] == 3.5
 
 
+def test_get_limits_reports_device_max(bench, psu):
+    r = bench.get_limits()
+    assert r["device_max"] == {"max_voltage_V": 60.0, "max_current_A": 5.0}
+    assert r["hardware"] == {"ovp_V": 60.0, "ocp_A": 5.0}
+    assert r["bench"]["max_voltage_V"] == 14.0
+
+
 def test_output_on_refused_when_panel_setpoints_exceed_limits(bench, psu):
     psu.update(v_set=24.0, i_set=1.0)
     with pytest.raises(LimitError, match="call `set` first"):
@@ -356,6 +363,9 @@ def test_tools_registered(bench):
     assert set(tools) == {"status", "get_limits", "measure", "set", "output", "power_cycle"}
     assert tools["status"].annotations.read_only_hint is True
     assert tools["set"].annotations.read_only_hint is False
+    assert tools["set"].annotations.idempotent_hint is True
+    assert tools["power_cycle"].annotations.destructive_hint is True
+    assert tools["power_cycle"].annotations.idempotent_hint is False
 
 
 def test_limit_refusal_is_tool_error(bench, psu):

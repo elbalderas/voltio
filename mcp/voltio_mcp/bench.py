@@ -193,6 +193,7 @@ class Bench:
             hw = self.psu.limits()
             return {
                 "hardware": hw,
+                "device_max": self.psu.max(),
                 "bench": {
                     "max_voltage_V": self.cfg.max_voltage_V,
                     "max_current_A": self.cfg.max_current_A,

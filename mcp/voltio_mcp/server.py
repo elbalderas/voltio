@@ -39,6 +39,9 @@ Controls a bench power supply that feeds the device under test (an ECU).
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False)
+# Not idempotent: two calls are two resets of the ECU.
+POWER_CYCLE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False,
+                              open_world_hint=False)
 
 
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -103,7 +106,7 @@ def create_server(bench: Bench) -> MCPServer:
 
     @mcp.tool(name="get_limits", annotations=READ_ONLY)
     def get_limits() -> dict:
-        """Read the PSU's OVP/OCP protection limits and the bench limits this server enforces."""
+        """Read the PSU's OVP/OCP protection limits, its maximum voltage/current, and the bench limits this server enforces."""
         return _call(bench.get_limits)
 
     @mcp.tool(name="measure", annotations=READ_ONLY)
@@ -138,9 +141,13 @@ def create_server(bench: Bench) -> MCPServer:
         """Switch the PSU output on or off. 'off' is always allowed; 'on' is refused if the setpoints exceed the bench limits."""
         return _call(bench.output, state)
 
-    @mcp.tool(name="power_cycle", annotations=WRITE)
+    @mcp.tool(name="power_cycle", annotations=POWER_CYCLE)
     def power_cycle(off_ms: int = 1000) -> dict:
-        """Switch the output off, wait off_ms milliseconds, and switch it back on. Use to reset the ECU."""
+        """Switch the output off, wait off_ms milliseconds, and switch it back on. Use to reset the ECU.
+
+        An `output` "off" during the wait aborts the cycle and the output stays off
+        (result has aborted: true).
+        """
         return _call(bench.power_cycle, off_ms)
 
     return mcp

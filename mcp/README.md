@@ -6,7 +6,9 @@ speaks MCP) control a BK Precision 1900B-series PSU through the `voltio` CLI.
 The safety rules live in the server, not in the agent's prompt:
 
 - **Bench limits.** Setpoints above `max_voltage_V` / `max_current_A` are refused
-  before anything reaches the PSU.
+  before anything reaches the PSU. Values are first rounded to the PSU's resolution
+  (0.1 V; 0.1 A, or 0.01 A on the 1685B), so a request that would be programmed above
+  a cap is refused too.
 - **Hardware protection.** OVP/OCP from the config are programmed before the first
   command that can energise the load.
 - **No surprise energising.** `output on` and `power_cycle` are refused if the PSU's
@@ -22,14 +24,15 @@ The safety rules live in the server, not in the agent's prompt:
 | Tool | Kind | What it does |
 |---|---|---|
 | `status` | read | Setpoints, measured V/I/W, mode (CV or CC) |
-| `get_limits` | read | PSU OVP/OCP plus the bench limits |
+| `get_limits` | read | PSU OVP/OCP, the model's max voltage/current (`device_max`), and the bench limits |
 | `measure(duration_s, interval_ms=500, include_samples=false)` | read | Samples V/I over time; returns min/max/avg and a count of CC samples. Cancelling the call stops the sampling; a run cut short returns `stopped_early: true` |
 | `set(voltage_V?, current_A?)` | write | Changes setpoints within the bench limits |
 | `output(state)` | write | `"on"` / `"off"` |
-| `power_cycle(off_ms=1000)` | write | Off, wait, on |
+| `power_cycle(off_ms=1000)` | write | Off, wait, on. An `output off` during the wait aborts it (`aborted: true`, output stays off) |
 
 Read tools carry `readOnlyHint: true` and write tools `destructiveHint: true`, so
-clients that understand MCP annotations can treat them differently.
+clients that understand MCP annotations can treat them differently. `power_cycle`
+is also marked `idempotentHint: false`: two calls are two resets.
 
 ## Install
 

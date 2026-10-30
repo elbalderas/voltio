@@ -3,6 +3,7 @@
 Mimics the real CLI's argument layout and JSON output. State lives in the
 JSON file named by $FAKE_VOLTIO_STATE:
   - setpoints, output state, OVP/OCP
+  - "max_V"/"max_A": the model's maximum voltage/current (`max` command)
   - "load_A": current the simulated ECU draws when powered
   - "fail": if set, every command fails with this message
   - "fail_cmd": fail only commands whose "cmd args..." starts with this string
@@ -17,7 +18,8 @@ import json
 import os
 import sys
 
-DEFAULTS = {"v_set": 0.0, "i_set": 0.0, "on": False, "ovp": 60.0, "ocp": 5.0, "load_A": 0.1, "calls": []}
+DEFAULTS = {"v_set": 0.0, "i_set": 0.0, "on": False, "ovp": 60.0, "ocp": 5.0, "load_A": 0.1,
+            "max_V": 60.0, "max_A": 5.0, "calls": []}
 
 
 def ok(**kv):
@@ -96,6 +98,9 @@ def main(argv):
             st["ocp"] = ocp
         save()
         return ok(ovp_V=st["ovp"], ocp_A=st["ocp"])
+    if cmd == "max":
+        save()
+        return ok(max_voltage_V=st["max_V"], max_current_A=st["max_A"])
     save()
     return err("Unknown command")
 

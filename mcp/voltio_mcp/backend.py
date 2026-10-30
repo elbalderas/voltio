@@ -61,6 +61,10 @@ class CliBackend:
     def output(self, on: bool) -> dict:
         return self._run("output", "on" if on else "off")
 
+    def max(self) -> dict:
+        """The model's maximum settable voltage and current."""
+        return self._run("max")
+
     def limits(self, ovp: float | None = None, ocp: float | None = None) -> dict:
         args = []
         if ovp is not None:
